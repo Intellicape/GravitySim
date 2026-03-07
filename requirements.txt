@@ -1,0 +1,5 @@
+numpy>=1.26
+pygame>=2.5
+# optional:
+numba>=0.59
+matplotlib>=3.8
