@@ -1,5 +1,6 @@
 from __future__ import annotations
 import os
+import datetime
 import pygame as pg
 import numpy as np
 from dataclasses import dataclass, field
@@ -326,8 +327,7 @@ class NBodyUI:
         if not scene and save_name == "current":
             scene, save_name = self._start_screen()
 
-        config   = scene
-        curr_name = save_name
+        config = scene
 
         if config:
             self.load_from(f"scenes/{config}.json")
@@ -407,8 +407,9 @@ class NBodyUI:
                     elif k == pg.K_SPACE: self.state.running = not self.state.running
                     elif k == pg.K_c: self.clear()
                     elif k == pg.K_q:
-                        if curr_name.strip():
-                            self.save_current(f'scenes/{curr_name.strip()}.json')
+                        ts = datetime.datetime.now().strftime("%Y%m%dT%H%M%S")
+                        base = config.strip() or "unnamed"
+                        self.save_current(f"scenes/{base}_{ts}.json")
                     elif k == pg.K_l:
                         if config.strip():
                             self.load_from(f'scenes/{config.strip()}.json')
