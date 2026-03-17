@@ -51,6 +51,9 @@ class NBodyUI:
         self.radius = np.zeros((0,), dtype=float)
         self.drag_start = None
         self.trails_points = []
+        self._scene_browser_open = False
+        self._scene_browser_scroll = 0
+        self._scene_browser_selected = 0
 
     # --- координатные преобразования ---
     def to_screen(self, p):
@@ -117,15 +120,70 @@ class NBodyUI:
         hud = [
             f"N={len(self.pos)}  int={self.state.integrator}  dt={self.state.dt:.4f}  eps={self.state.eps:.3f}  numba={'on' if _NUMBA else 'off'}",
             f"mass_new={self.state.new_mass:.3f}  v_scale={self.state.v_scale:.2f}  running={self.state.running}",
-            f"Energy≈{E:.5f}   zoom={self.state.zoom:.0f}   trails={self.state.trails}   collisions={self.state.collisions}",
+            f"Energy≈{E:.5f}   zoom={self.state.zoom:.0f}   trails={self.state.trails}   collisions={self.state.collisions}   [O] сцены",
         ]
         y=8
         for line in hud:
             surf = self.font.render(line, True, (200,220,255))
             self.screen.blit(surf, (8,y)); y+=18
 
-        # 6. Обновление экрана
+        # 6. Scene browser overlay
+        if self._scene_browser_open:
+            self._draw_scene_browser()
+
+        # 7. Обновление экрана
         pg.display.flip()
+
+    def _scene_list(self) -> list[str]:
+        return sorted(
+            os.path.splitext(f)[0]
+            for f in os.listdir(_SCENES_DIR)
+            if f.endswith(".json") and not f.startswith(".")
+        )
+
+    def _draw_scene_browser(self) -> None:
+        scenes = self._scene_list()
+        W, H = self.screen.get_size()
+        PW, PH = 340, min(60 + len(scenes) * 24 + 40, H - 60)
+        px = W - PW - 16
+        py = 40
+
+        # Полупрозрачный фон
+        surf = pg.Surface((PW, PH), pg.SRCALPHA)
+        surf.fill((10, 14, 30, 220))
+        self.screen.blit(surf, (px, py))
+        pg.draw.rect(self.screen, (60, 100, 180), (px, py, PW, PH), 1, border_radius=6)
+
+        font_b = pg.font.SysFont("consolas", 16, bold=True)
+        font_s = pg.font.SysFont("consolas", 15)
+        COLOR_TEXT  = (200, 220, 255)
+        COLOR_HINT  = (100, 120, 160)
+        COLOR_SEL   = (40, 70, 130)
+        COLOR_HOV   = (30, 50, 100)
+
+        self.screen.blit(font_b.render("[ O ] Выбор сцены  (Enter — загрузить)", True, COLOR_TEXT), (px+10, py+8))
+        self.screen.blit(font_s.render("↑ ↓ — навигация", True, COLOR_HINT), (px+10, py+28))
+
+        MAX_VIS = (PH - 60) // 24
+        scroll  = max(0, min(self._scene_browser_scroll, len(scenes) - MAX_VIS))
+        self._scene_browser_scroll = scroll
+
+        mx, my = pg.mouse.get_pos()
+        for k, name in enumerate(scenes[scroll: scroll + MAX_VIS]):
+            idx = scroll + k
+            ry  = py + 52 + k * 24
+            is_sel = (idx == self._scene_browser_selected)
+            is_hov = (px <= mx <= px + PW and ry <= my <= ry + 22)
+            if is_sel:
+                pg.draw.rect(self.screen, COLOR_SEL, (px+4, ry, PW-8, 22), border_radius=3)
+            elif is_hov:
+                pg.draw.rect(self.screen, COLOR_HOV, (px+4, ry, PW-8, 22), border_radius=3)
+            self.screen.blit(font_s.render(name, True, COLOR_TEXT), (px+12, ry+3))
+
+        if len(scenes) > MAX_VIS:
+            self.screen.blit(font_s.render(
+                f"{scroll+1}–{scroll+min(MAX_VIS,len(scenes))}/{len(scenes)}",
+                True, COLOR_HINT), (px+10, py+PH-22))
 
     # --- Сцены ---
     def clear(self):
@@ -280,18 +338,73 @@ class NBodyUI:
                 if e.type == pg.QUIT:
                     running_app = False
 
-                elif e.type == pg.MOUSEBUTTONDOWN and e.button == 1:
-                    self.drag_start = self.to_world(e.pos)
+                elif e.type == pg.MOUSEBUTTONDOWN:
+                    if self._scene_browser_open:
+                        scenes = self._scene_list()
+                        W, H = self.screen.get_size()
+                        PW = 340
+                        px = W - PW - 16
+                        py = 40
+                        PH = min(60 + len(scenes)*24 + 40, H - 60)
+                        MAX_VIS = (PH - 60) // 24
+                        mx, my = e.pos
+                        # клик по строке списка
+                        if e.button == 1 and px <= mx <= px+PW:
+                            k2 = (my - py - 52) // 24
+                            if 0 <= k2 < MAX_VIS:
+                                idx = self._scene_browser_scroll + k2
+                                if 0 <= idx < len(scenes):
+                                    self._scene_browser_selected = idx
+                                    name = scenes[idx]
+                                    self.load_from(f"scenes/{name}.json")
+                                    config = name
+                                    self._scene_browser_open = False
+                        # скролл колесом внутри панели
+                        elif e.button == 4:
+                            self._scene_browser_scroll = max(0, self._scene_browser_scroll - 1)
+                        elif e.button == 5:
+                            self._scene_browser_scroll += 1
+                    elif e.button == 1:
+                        self.drag_start = self.to_world(e.pos)
 
                 elif e.type == pg.MOUSEBUTTONUP and e.button == 1 and self.drag_start is not None:
-                    end = self.to_world(e.pos)
-                    v = (end - self.drag_start) * self.state.v_scale
-                    self.add_body(self.drag_start, v, self.state.new_mass)
+                    if not self._scene_browser_open:
+                        end = self.to_world(e.pos)
+                        v = (end - self.drag_start) * self.state.v_scale
+                        self.add_body(self.drag_start, v, self.state.new_mass)
                     self.drag_start = None
 
                 elif e.type == pg.KEYDOWN:
                     k = e.key
-                    if k == pg.K_SPACE: self.state.running = not self.state.running
+                    # ── навигация в браузере сцен ──
+                    if self._scene_browser_open:
+                        scenes = self._scene_list()
+                        if k == pg.K_ESCAPE or k == pg.K_o:
+                            self._scene_browser_open = False
+                        elif k == pg.K_UP:
+                            self._scene_browser_selected = max(0, self._scene_browser_selected - 1)
+                            self._scene_browser_scroll = min(self._scene_browser_scroll,
+                                                             self._scene_browser_selected)
+                        elif k == pg.K_DOWN:
+                            self._scene_browser_selected = min(len(scenes)-1,
+                                                               self._scene_browser_selected + 1)
+                            W, H = self.screen.get_size()
+                            PH = min(60 + len(scenes)*24+40, H-60)
+                            MAX_VIS = (PH-60)//24
+                            if self._scene_browser_selected >= self._scene_browser_scroll + MAX_VIS:
+                                self._scene_browser_scroll += 1
+                        elif k == pg.K_RETURN:
+                            if 0 <= self._scene_browser_selected < len(scenes):
+                                name = scenes[self._scene_browser_selected]
+                                self.load_from(f"scenes/{name}.json")
+                                config = name
+                                self._scene_browser_open = False
+                        continue  # не обрабатываем остальные клавиши пока открыт браузер
+                    # ── обычное управление ──
+                    if k == pg.K_o:
+                        self._scene_browser_open = True
+                        self._scene_browser_scroll = 0
+                    elif k == pg.K_SPACE: self.state.running = not self.state.running
                     elif k == pg.K_c: self.clear()
                     elif k == pg.K_q:
                         if curr_name.strip():
