@@ -2,7 +2,7 @@ from __future__ import annotations
 import numpy as np
 
 try:
-    from numba import njit, prange
+    from numba import njit
     _NUMBA = True
 except ImportError:
     _NUMBA = False
@@ -12,7 +12,7 @@ except ImportError:
 # ---------------------------------------------------------------------------
 
 if _NUMBA:
-    @njit(parallel=True, cache=True)
+    @njit(cache=True)
     def accelerations(pos: np.ndarray, mass: np.ndarray, G: float, eps: float) -> np.ndarray:
         """
         pos: (N,2), mass: (N,), return a: (N,2)
@@ -21,7 +21,7 @@ if _NUMBA:
         N = pos.shape[0]
         a = np.zeros((N, 2))
         eps2 = eps * eps
-        for i in prange(N):
+        for i in range(N):
             ax = 0.0
             ay = 0.0
             for j in range(N):

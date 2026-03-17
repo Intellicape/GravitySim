@@ -15,14 +15,19 @@ def _warmup_numba() -> None:
     """Первый вызов numba-функций вызывает JIT-компиляцию. Делаем это заранее."""
     if not _NUMBA:
         return
-    dummy_pos  = np.zeros((2, 2), dtype=np.float64)
-    dummy_vel  = np.zeros((2, 2), dtype=np.float64)
-    dummy_mass = np.ones(2, dtype=np.float64)
-    dummy_rad  = np.ones(2, dtype=np.float64) * 0.1
-    dummy_pos[0] = [0.0, 0.0]
-    dummy_pos[1] = [1.0, 0.0]
-    accelerations(dummy_pos, dummy_mass, 1.0, 0.01)
-    handle_collisions(dummy_pos, dummy_vel, dummy_mass, dummy_rad)
+    try:
+        dummy_pos  = np.zeros((2, 2), dtype=np.float64)
+        dummy_vel  = np.zeros((2, 2), dtype=np.float64)
+        dummy_mass = np.ones(2, dtype=np.float64)
+        dummy_rad  = np.ones(2, dtype=np.float64) * 0.1
+        dummy_pos[0] = [0.0, 0.0]
+        dummy_pos[1] = [1.0, 0.0]
+        accelerations(dummy_pos, dummy_mass, 1.0, 0.01)
+        handle_collisions(dummy_pos, dummy_vel, dummy_mass, dummy_rad)
+    except Exception as exc:
+        print(f"[numba] JIT warmup failed, falling back to NumPy: {exc}")
+        import app.model as _m
+        _m._NUMBA = False
 
 @dataclass
 class SimState:
