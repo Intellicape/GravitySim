@@ -1,10 +1,13 @@
 from __future__ import annotations
+import os
 import pygame as pg
 import numpy as np
 from dataclasses import dataclass, field
 from .integrators import INTEGRATORS
 from .model import accelerations, total_energy, handle_collisions
 from .io_scenes import Scene, Body, save_scene, load_scene
+
+_SCENES_DIR = os.path.join(os.path.dirname(__file__), "..", "scenes")
 
 @dataclass
 class SimState:
@@ -113,6 +116,7 @@ class NBodyUI:
     # --- Сцены ---
     def clear(self):
         self.pos = np.zeros((0,2)); self.vel = np.zeros((0,2)); self.mass = np.zeros((0,))
+        self.radius = np.zeros((0,), dtype=float)
         self.trails_points.clear()
 
     def add_body(self, world_pos, world_vel, m):
@@ -120,7 +124,8 @@ class NBodyUI:
             self.pos = np.vstack([self.pos, world_pos[None,:]])
             self.vel = np.vstack([self.vel, world_vel[None,:]])
             self.mass = np.hstack([self.mass, np.array([m])])
-            self.radius = np.array([max(0.01, (self.mass[i] ** 0.3)/100) for i in range(len(self.pos))])
+            r_new = max(0.01, (m ** 0.3) / 100)
+            self.radius = np.hstack([self.radius, [r_new]])
 
     def save_current(self, path="current.json"):
         from .io_scenes import Body, Scene
@@ -129,21 +134,129 @@ class NBodyUI:
         save_scene(path, Scene(G=self.state.G, eps=self.state.eps, dt=self.state.dt, bodies=bodies))
 
     def load_from(self, path="scenes/two_body.json"):
-        sc = load_scene(path)
+        try:
+            sc = load_scene(path)
+        except (FileNotFoundError, KeyError, ValueError) as exc:
+            print(f"[load_from] ошибка загрузки '{path}': {exc}")
+            return
         self.state.G, self.state.eps, self.state.dt = sc.G, sc.eps, sc.dt
+        was_running = self.state.running
+        self.state.running = False
         self.clear()
         for b in sc.bodies:
-            self.add_body(np.array([b.x,b.y]), np.array([b.vx,b.vy]), b.m)
+            self.add_body(np.array([b.x, b.y]), np.array([b.vx, b.vy]), b.m)
+        self.state.running = was_running
 
+
+    # --- Стартовый экран ---
+    def _start_screen(self) -> tuple[str, str]:
+        """Pygame-экран выбора сцены. Возвращает (scene_name, save_name)."""
+        available = sorted(
+            os.path.splitext(f)[0]
+            for f in os.listdir(_SCENES_DIR)
+            if f.endswith(".json") and not f.startswith(".")
+        )
+
+        font_big = pg.font.SysFont("consolas", 20, bold=True)
+        font_sm  = pg.font.SysFont("consolas", 16)
+
+        fields = {"scene": "", "name": "current"}
+        active = "scene"
+        COLOR_ACTIVE   = (100, 180, 255)
+        COLOR_INACTIVE = (80, 100, 130)
+        COLOR_BG       = (10, 10, 18)
+        COLOR_TEXT     = (200, 220, 255)
+        COLOR_HINT     = (100, 120, 160)
+        COLOR_SEL      = (40, 60, 100)
+
+        scroll_offset = 0
+        MAX_VISIBLE = 10
+        clock = pg.time.Clock()
+
+        while True:
+            for e in pg.event.get():
+                if e.type == pg.QUIT:
+                    pg.quit()
+                    raise SystemExit
+
+                elif e.type == pg.KEYDOWN:
+                    if e.key == pg.K_TAB:
+                        active = "name" if active == "scene" else "scene"
+                    elif e.key == pg.K_RETURN:
+                        return fields["scene"].strip(), fields["name"].strip() or "current"
+                    elif e.key == pg.K_BACKSPACE:
+                        fields[active] = fields[active][:-1]
+                    else:
+                        if e.unicode.isprintable():
+                            fields[active] += e.unicode
+
+                elif e.type == pg.MOUSEBUTTONDOWN:
+                    mx, my = e.pos
+                    # клик по полю Scene
+                    if 110 <= my <= 140:
+                        active = "scene"
+                    # клик по полю Save name
+                    elif 200 <= my <= 230:
+                        active = "name"
+                    # клик по списку сцен
+                    elif 270 <= my <= 270 + MAX_VISIBLE * 24:
+                        idx = (my - 270) // 24 + scroll_offset
+                        if 0 <= idx < len(available):
+                            fields["scene"] = available[idx]
+                            active = "name"
+
+                    # скролл колесом
+                    if e.button == 4:
+                        scroll_offset = max(0, scroll_offset - 1)
+                    elif e.button == 5:
+                        scroll_offset = min(max(0, len(available) - MAX_VISIBLE), scroll_offset + 1)
+
+            self.screen.fill(COLOR_BG)
+
+            # Заголовок
+            self.screen.blit(font_big.render("N-Body Simulator — выбор сцены", True, COLOR_TEXT), (30, 30))
+            self.screen.blit(font_sm.render("Tab — переключить поле   Enter — запустить   ЛКМ — выбрать сцену из списка", True, COLOR_HINT), (30, 60))
+
+            # Поле: Scene to load
+            sc_col = COLOR_ACTIVE if active == "scene" else COLOR_INACTIVE
+            pg.draw.rect(self.screen, sc_col, (30, 108, 500, 32), 2, border_radius=4)
+            self.screen.blit(font_sm.render("Сцена для загрузки (опционально):", True, COLOR_HINT), (30, 90))
+            self.screen.blit(font_sm.render(fields["scene"] or " ", True, COLOR_TEXT), (38, 116))
+
+            # Поле: Save name
+            sn_col = COLOR_ACTIVE if active == "name" else COLOR_INACTIVE
+            pg.draw.rect(self.screen, sn_col, (30, 198, 500, 32), 2, border_radius=4)
+            self.screen.blit(font_sm.render("Имя файла сохранения:", True, COLOR_HINT), (30, 180))
+            self.screen.blit(font_sm.render(fields["name"] or " ", True, COLOR_TEXT), (38, 206))
+
+            # Список доступных сцен
+            self.screen.blit(font_sm.render("Доступные сцены:", True, COLOR_HINT), (30, 250))
+            visible = available[scroll_offset: scroll_offset + MAX_VISIBLE]
+            for k, name in enumerate(visible):
+                y = 270 + k * 24
+                if name == fields["scene"]:
+                    pg.draw.rect(self.screen, COLOR_SEL, (30, y, 400, 22), border_radius=3)
+                self.screen.blit(font_sm.render(name, True, COLOR_TEXT), (36, y + 2))
+
+            if len(available) > MAX_VISIBLE:
+                self.screen.blit(font_sm.render(
+                    f"↑↓ колесо мыши  ({scroll_offset+1}–{scroll_offset+len(visible)}/{len(available)})",
+                    True, COLOR_HINT), (30, 270 + MAX_VISIBLE * 24 + 4))
+
+            pg.display.flip()
+            clock.tick(30)
 
     # --- Цикл приложения ---
-    def run(self):
+    def run(self, scene: str = "", save_name: str = "current"):
+        # Если аргументы не переданы через CLI — показываем стартовый экран
+        if not scene and save_name == "current":
+            scene, save_name = self._start_screen()
 
-        print("-" * 100)
-        print("Добро пожаловать в β-версию GravitySim!")
-        config = input("Введите имя файла, из которого вы собираетесь загрузить сцену(опционально): ")
-        curr_name = input("Введите имя текущего файла: ")
-        print("-" * 100)
+        config   = scene
+        curr_name = save_name
+
+        if config:
+            self.load_from(f"scenes/{config}.json")
 
         running_app = True
         while running_app:
@@ -165,11 +278,11 @@ class NBodyUI:
                     if k == pg.K_SPACE: self.state.running = not self.state.running
                     elif k == pg.K_c: self.clear()
                     elif k == pg.K_q:
-                        if config != '' and config != ' ':
-                            self.save_current(f'scenes/{curr_name}.json')
+                        if curr_name.strip():
+                            self.save_current(f'scenes/{curr_name.strip()}.json')
                     elif k == pg.K_l:
-                        if config != '' and config != ' ':
-                            self.load_from(f'scenes/{config}.json')
+                        if config.strip():
+                            self.load_from(f'scenes/{config.strip()}.json')
                     elif k == pg.K_1: self.state.integrator = "euler"
                     elif k == pg.K_2: self.state.integrator = "leapfrog"
                     elif k == pg.K_3: self.state.integrator = "rk4"

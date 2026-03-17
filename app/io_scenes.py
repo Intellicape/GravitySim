@@ -1,6 +1,6 @@
 from __future__ import annotations
 import json
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 from typing import List
 
 @dataclass
@@ -12,7 +12,7 @@ class Scene:
     G: float = 1.0
     eps: float = 0.005
     dt: float = 0.005
-    bodies: List[Body] = None
+    bodies: List[Body] = field(default_factory=list)
 
 def save_scene(path, scene: Scene):
     data = asdict(scene)
@@ -24,5 +24,5 @@ def load_scene(path) -> Scene:
     with open(path, "r", encoding="utf-8") as f:
         data = json.load(f)
     bodies = [Body(**b) for b in data["bodies"]]
-    return Scene(G=data.get("G",1.0), eps=data.get("eps",0.02),
+    return Scene(G=data.get("G",1.0), eps=data.get("eps",0.005),
                  dt=data.get("dt",0.005), bodies=bodies)

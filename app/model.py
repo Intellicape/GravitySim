@@ -66,6 +66,8 @@ def handle_collisions(pos, vel, mass, radius):
             continue
 
         # Импульс
+        if mass[i] == 0 or mass[j] == 0:
+            continue
         J = (1 + e) * rel_normal / (1/mass[i] + 1/mass[j])
 
         impulse = J * n
