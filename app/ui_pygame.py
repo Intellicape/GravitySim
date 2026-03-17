@@ -4,10 +4,24 @@ import pygame as pg
 import numpy as np
 from dataclasses import dataclass, field
 from .integrators import INTEGRATORS
-from .model import accelerations, total_energy, handle_collisions
+from .model import accelerations, total_energy, handle_collisions, _NUMBA
 from .io_scenes import Scene, Body, save_scene, load_scene
 
 _SCENES_DIR = os.path.join(os.path.dirname(__file__), "..", "scenes")
+
+
+def _warmup_numba() -> None:
+    """Первый вызов numba-функций вызывает JIT-компиляцию. Делаем это заранее."""
+    if not _NUMBA:
+        return
+    dummy_pos  = np.zeros((2, 2), dtype=np.float64)
+    dummy_vel  = np.zeros((2, 2), dtype=np.float64)
+    dummy_mass = np.ones(2, dtype=np.float64)
+    dummy_rad  = np.ones(2, dtype=np.float64) * 0.1
+    dummy_pos[0] = [0.0, 0.0]
+    dummy_pos[1] = [1.0, 0.0]
+    accelerations(dummy_pos, dummy_mass, 1.0, 0.01)
+    handle_collisions(dummy_pos, dummy_vel, dummy_mass, dummy_rad)
 
 @dataclass
 class SimState:
@@ -101,7 +115,7 @@ class NBodyUI:
         # 5. HUD
         E = total_energy(self.pos, self.vel, self.mass, self.state.G, self.state.eps) if len(self.pos)>1 else 0.0
         hud = [
-            f"N={len(self.pos)}  int={self.state.integrator}  dt={self.state.dt:.4f}  eps={self.state.eps:.3f}",
+            f"N={len(self.pos)}  int={self.state.integrator}  dt={self.state.dt:.4f}  eps={self.state.eps:.3f}  numba={'on' if _NUMBA else 'off'}",
             f"mass_new={self.state.new_mass:.3f}  v_scale={self.state.v_scale:.2f}  running={self.state.running}",
             f"Energy≈{E:.5f}   zoom={self.state.zoom:.0f}   trails={self.state.trails}   collisions={self.state.collisions}",
         ]
@@ -248,6 +262,8 @@ class NBodyUI:
 
     # --- Цикл приложения ---
     def run(self, scene: str = "", save_name: str = "current"):
+        _warmup_numba()
+
         # Если аргументы не переданы через CLI — показываем стартовый экран
         if not scene and save_name == "current":
             scene, save_name = self._start_screen()
